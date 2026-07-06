@@ -29,6 +29,7 @@ import {
 } from "./groq.js";
 import { runResearch } from "./research.js";
 import { templateParts } from "./template.js";
+import { DOC_SETS } from "./docs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -121,6 +122,7 @@ Rules:
 - Never generate PRD content, architecture, or recommendations. Only questions.
 - Ask as many questions as necessary to resolve the biggest ambiguities, but maintain strict importance scrutiny for each.
 - Return only valid JSON. Do not wrap it in markdown or add prose before or after it.
+- Every object key and string value MUST be enclosed in double quotes. Array values MUST be double-quoted strings. Never use bare words like iOS app.
 
 The JSON must match this schema exactly (use ONLY the enum values listed):
 ${JSON.stringify(questionsSchema)}`;
@@ -160,13 +162,62 @@ function assertQuestionsSpec(value) {
   return value;
 }
 
+function extractJsonObject(content) {
+  const stripped = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("questions: response did not contain a JSON object");
+  }
+  return stripped.slice(start, end + 1);
+}
+
+function repairQuestionsJson(content) {
+  const json = extractJsonObject(content).replace(/,\s*([}\]])/g, "$1");
+  const lines = json.split("\n");
+  const repaired = [];
+  let arrayDepth = 0;
+
+  for (const rawLine of lines) {
+    let line = rawLine;
+    const trimmed = line.trim();
+    if (arrayDepth > 0 && trimmed && !/^[{\[\]}",\d]|^(true|false|null)\b/.test(trimmed)) {
+      const match = line.match(/^(\s*)(.+?)(,?)\s*$/);
+      if (match) {
+        const value = match[2].trim().replace(/^['"]|['"]$/g, "");
+        line = `${match[1]}${JSON.stringify(value)}${match[3]}`;
+      }
+    }
+    repaired.push(line);
+
+    const withoutStrings = line.replace(/"(?:\\.|[^"\\])*"/g, "\"\"");
+    arrayDepth += (withoutStrings.match(/\[/g) || []).length;
+    arrayDepth -= (withoutStrings.match(/\]/g) || []).length;
+  }
+
+  return repaired.join("\n").replace(/,\s*([}\]])/g, "$1");
+}
+
+function parseQuestionsJson(content) {
+  try {
+    return JSON.parse(extractJsonObject(content));
+  } catch (firstErr) {
+    const repaired = repairQuestionsJson(content);
+    try {
+      console.warn(`[questions] repaired malformed JSON: ${firstErr.message}`);
+      return JSON.parse(repaired);
+    } catch (secondErr) {
+      throw new Error(`questions: JSON correction failed: ${secondErr.message}`);
+    }
+  }
+}
+
 // ── PRD part system prompts ───────────────────────────────────────────────────
 
-function prdPartSystemPrompt(part, hasResearch) {
-  const researchNote = hasResearch
-    ? `\n- RESEARCH CONTEXT is provided from real web searches. Use it to ground use cases, metrics, scope, and compliance in real-world data. Cite sources from the research where appropriate.`
-    : "";
-
+function prdPartSystemPrompt(part) {
   const partNote =
     part === 1
       ? `\n- The template's title line says "Modular PRD Template: [Product / Feature Name]" — replace the ENTIRE line with "# <actual product name> — PRD".`
@@ -176,12 +227,11 @@ function prdPartSystemPrompt(part, hasResearch) {
 
 Rules:
 - Fill in ONLY the template part provided. Follow its structure and section order exactly. Replace every [bracketed placeholder] with concrete content.
-- Ground everything in the original prompt, the classification, the user's answers, and any research context provided.${researchNote}
+- Ground everything in the original prompt, the classification, and the user's answers.
 - Where something is unspecified, make a clearly reasonable assumption and mark it as an assumption rather than a fact.
 - Use cases must be written as natural narrative stories reflecting real problems — NOT templatey "As a [user], I want [action]" format.
 - This document is product requirements only: do NOT include system design, architecture, database schema, API contracts, or sprint tasks.
-- Do NOT include template instructions, HTML comments, generation notes, "write last", "SEARCH_GROUNDED", "Conditional:", "Each requirement must", or generic citation placeholders like "[source]" or "【source】".
-- Use actual source URLs/report names from research when available. If research lacks a source URL, write "source unavailable" instead of a placeholder.
+- Do NOT include template instructions, HTML comments, generation notes, "write last", "SEARCH_GROUNDED", "Conditional:", "Each requirement must", research instructions, source instructions, or generic citation placeholders like "[source]" or "【source】".
 - Return only the finished markdown for this part. No preamble, no commentary, no "Part ${part}" headers of your own, no code fences around the document.
 - Complete EVERY section in your template part — never stop early.${partNote}`;
 }
@@ -201,6 +251,8 @@ const PRD_QUALITY_RULES = [
   { label: "unspecified instruction", pattern: /Use\s+`?unspecified`?\s+when unknown/i },
   { label: "generic filler instruction", pattern: /No generic filler/i },
   { label: "repeat instruction", pattern: /Repeat per use case/i },
+  { label: "research instruction", pattern: /real, documented problems|Cite the source|Research this|RESEARCH FOR THIS SECTION/i },
+  { label: "source instruction", pattern: /Source:\s*\(link\/report\)/i },
   { label: "generic source placeholder", pattern: /【source】|\[source\]/i },
   {
     label: "unfilled template placeholder",
@@ -234,6 +286,8 @@ function cleanPrdMarkdown(markdown) {
     if (/^\s*Use\s+`?unspecified`?\s+when unknown/i.test(line)) continue;
     if (/^\s*No generic filler/i.test(line)) continue;
     if (/^\s*Repeat per use case/i.test(line)) continue;
+    if (/real, documented problems/i.test(line)) continue;
+    if (/Research this/i.test(line)) continue;
 
     if (/^\s*Each requirement must:/i.test(line)) {
       skippingRequirementRules = true;
@@ -261,6 +315,7 @@ function cleanPrdMarkdown(markdown) {
 
     cleaned.push(
       rawLine
+        .replace(/\s*Source:\s*\(link\/report\)/gi, "")
         .replace(/【source】|\[source\]/gi, "(source unavailable)")
         .replace(/<!--.*?-->/g, "")
     );
@@ -275,6 +330,118 @@ function assertPrdQuality(markdown, label) {
       throw new Error(`${label}: PRD cleanup failed: ${rule.label}`);
     }
   }
+}
+
+// Assemble the final document from the independently-generated sections.
+// Order: overview (part 1) → research evidence → requirements (part 2) → rollout (part 3).
+function assembleDocument(prdParts, researchSections) {
+  const researchBlock =
+    "# Research & Evidence\n\n" +
+    researchSections
+      .map((section) => `## ${section.heading}\n\n${section.content.trim()}`)
+      .join("\n\n");
+
+  return [prdParts[0], researchBlock, prdParts[1], prdParts[2]]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// ── SSE + downstream document generation ──────────────────────────────────────
+
+// Shared SSE scaffold. Writes are guarded so concurrent tracks can't write after
+// the response is closed (error / client disconnect).
+function openSse(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  let closed = false;
+  res.on("close", () => {
+    closed = true;
+  });
+  const send = (event, data) => {
+    if (!closed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  const end = () => {
+    if (!closed) {
+      closed = true;
+      res.end();
+    }
+  };
+  return { send, end };
+}
+
+// User revision comments folded into the generation prompt.
+function formatNotes(notes) {
+  const arr = Array.isArray(notes) ? notes : notes ? [notes] : [];
+  const clean = arr.map((n) => String(n).trim()).filter(Boolean);
+  if (!clean.length) return "";
+  return (
+    "REVISION INSTRUCTIONS — apply these user-requested changes to the document:\n" +
+    clean.map((n) => `- ${n}`).join("\n") +
+    "\n\n"
+  );
+}
+
+// Bounded grounding context for downstream docs (respects the 120b TPM budget).
+function buildDownstreamContext({ prompt, classification, prd, extra = {}, notes }) {
+  let ctx =
+    `ORIGINAL PROMPT:\n${prompt.substring(0, 1500)}\n\n` +
+    `CLASSIFICATION (JSON):\n${JSON.stringify(classification)}\n\n` +
+    `PRODUCT PRD (grounding — may be truncated):\n${prd.substring(0, 9000)}\n\n`;
+  for (const [key, value] of Object.entries(extra)) {
+    if (value) ctx += `${key} (grounding — may be truncated):\n${String(value).substring(0, 5000)}\n\n`;
+  }
+  return ctx + formatNotes(notes);
+}
+
+// Generate one document by streaming its fixed parts as live sections, then
+// emit the assembled document via a `replace` event tagged with its docId.
+async function streamDocParts(send, doc, sharedContext) {
+  const partContents = [];
+  for (const part of doc.parts) {
+    const id = part.id;
+    const action = part.title.toLowerCase();
+    send("section", { id, doc: doc.docId, title: part.title, status: "generating", message: `Drafting ${action}…` });
+    send("status", { phase: "generating", message: `Drafting ${action} for ${doc.title}…` });
+
+    const stream = await completeStream(`${doc.docId}-${id}`, {
+      model: MODEL_PRD,
+      reasoning_effort: "low",
+      max_completion_tokens: 4500,
+      messages: [
+        { role: "system", content: part.system },
+        {
+          role: "user",
+          content: `${sharedContext}\nSECTION OUTLINE TO FILL (output only the finished markdown, complete every section):\n${part.outline}`,
+        },
+      ],
+    });
+
+    let content = "";
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) {
+        content += delta;
+        send("section_delta", { id, delta });
+      }
+    }
+
+    send("section", { id, doc: doc.docId, title: part.title, status: "awaiting_approval", message: `Reviewing ${action}…` });
+    content = cleanPrdMarkdown(content);
+    if (content.trim().length < 50) {
+      throw new Error(`${doc.docId}/${id}: model returned near-empty content`);
+    }
+    send("section_content", { id, content });
+    send("section", { id, doc: doc.docId, title: part.title, status: "approved", message: `Completed ${action}` });
+    console.log(`[${doc.docId}] ${id} approved (${content.length} chars)`);
+    partContents.push(content);
+  }
+  const full = partContents.join("\n\n");
+  send("replace", { docId: doc.docId, title: doc.title, content: full });
+  return full;
 }
 
 // ── Express app ───────────────────────────────────────────────────────────────
@@ -338,9 +505,9 @@ app.post("/api/questions", async (req, res) => {
     return res.status(400).json({ error: "Missing prompt or classification" });
 
   try {
-    const content = await completeWithRetry("questions", {
+    const content = await completeWithRetry("questions-json", {
       model: MODEL_ENUM[1],
-      temperature: 0.2,
+      temperature: 0.1,
       max_completion_tokens: 1200,
       messages: [
         { role: "system", content: QUESTIONS_SYSTEM_PROMPT },
@@ -350,7 +517,7 @@ app.post("/api/questions", async (req, res) => {
         },
       ],
     });
-    res.json(assertQuestionsSpec(JSON.parse(content)));
+    res.json(assertQuestionsSpec(parseQuestionsJson(content)));
   } catch (err) {
     console.error(`[/api/questions] ${err.message}`);
     res.status(502).json({ error: err.message });
@@ -393,12 +560,13 @@ async function mergeAnswers(prompt, classification, answers) {
   return merged;
 }
 
-// ── Step 3: Generate PRD (research + SSE stream) ──────────────────────────────
+// ── Step 3: Generate PRD (SSE stream + section-merged research) ───────────────
 
 app.post("/api/generate-prd", async (req, res) => {
   const prompt = (req.body.prompt || "").trim();
   const classification = req.body.classification;
   const answers = req.body.answers || {};
+  const notes = req.body.notes;
   if (!prompt || !classification)
     return res.status(400).json({ error: "Missing prompt or classification" });
 
@@ -410,91 +578,178 @@ app.post("/api/generate-prd", async (req, res) => {
     "X-Accel-Buffering": "no",
   });
 
+  // Guard writes: research and PRD tracks run concurrently, so once the response
+  // is closed (error, client disconnect) the still-running track must not write.
+  let closed = false;
+  res.on("close", () => {
+    closed = true;
+  });
   const send = (event, data) => {
+    if (closed) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+  const end = () => {
+    if (closed) return;
+    closed = true;
+    res.end();
+  };
+
+  // Per-part status wording — describes the action in progress, no "N/3".
+  const partMeta = [
+    {
+      generating: "Drafting overview — problem, users, goals & scope",
+      validating: "Reviewing overview draft",
+      done: "Completed overview",
+    },
+    {
+      generating: "Drafting requirements & compliance",
+      validating: "Reviewing requirements draft",
+      done: "Completed requirements & compliance",
+    },
+    {
+      generating: "Drafting rollout, risks & acceptance criteria",
+      validating: "Reviewing final draft",
+      done: "Completed rollout, risks & acceptance",
+    },
+  ];
 
   try {
-    // ── Phase 1: Merge Answers ──────────
+    // ── Phase 1: Merge answers into classification ──────────
     send("status", { phase: "researching", message: "Updating classification context…" });
     const modifiedClassification = await mergeAnswers(prompt, classification, answers);
 
-    // ── Phase 2: Research ──────────
-    send("status", { phase: "researching", message: "Researching real-world context…" });
-    const rawResearch = await runResearch(prompt, modifiedClassification);
-    
-    send("status", { phase: "research_done", message: "Research complete" });
+    // ── Phase 2: Research + PRD run concurrently on separate TPM budgets ──────────
+    // (research: groq/compound-mini · PRD: openai/gpt-oss-120b)
+    send("status", { phase: "generating", message: "Researching and drafting your PRD…" });
 
-    // ── Phase 4: Generate PRD in 3 parts ─────
     const sharedContext =
       `ORIGINAL PROMPT:\n${prompt.substring(0, 3000)}\n\n` +
-      `MODIFIED CLASSIFICATION (JSON):\n${JSON.stringify(modifiedClassification)}\n\n`;
+      `MODIFIED CLASSIFICATION (JSON):\n${JSON.stringify(modifiedClassification)}\n\n` +
+      formatNotes(notes);
 
-    let fullMarkdown = "";
+    const runPrdParts = async () => {
+      const parts = [];
+      for (let i = 0; i < templateParts.length; i++) {
+        const partNum = i + 1;
+        const id = `prdPart${partNum}`;
 
-    for (let i = 0; i < templateParts.length; i++) {
-      const partNum = i + 1;
-      send("status", {
-        phase: "generating",
-        part: partNum,
-        total: 3,
-        message: `Writing part ${partNum}/3…`,
-      });
+        send("section", { id, status: "generating", message: partMeta[i].generating });
+        send("status", { phase: "generating", message: partMeta[i].generating });
 
-      let partResearch = "";
-      if (partNum === 1) {
-        partResearch = `\n\nRESEARCH FOR THIS SECTION:\n- Use Cases: ${rawResearch.use_cases}\n- Metrics: ${rawResearch.metrics}\n- Scope: ${rawResearch.scope}\n`;
-      } else if (partNum === 2) {
-        partResearch = `\n\nRESEARCH FOR THIS SECTION:\n- Compliance: ${rawResearch.compliance}\n`;
-      }
+        const stream = await completeStream(`prd-part-${partNum}`, {
+          model: MODEL_PRD,
+          reasoning_effort: "low",
+          max_completion_tokens: 4500,
+          messages: [
+            { role: "system", content: prdPartSystemPrompt(partNum) },
+            {
+              role: "user",
+              content: `${sharedContext}\nTEMPLATE PART ${partNum} OF 3 TO FILL:\n${templateParts[i]}`,
+            },
+          ],
+        });
 
-      const stream = await completeStream(`prd-part-${partNum}`, {
-        model: MODEL_PRD,
-        reasoning_effort: "low",
-        max_completion_tokens: 4500,
-        messages: [
-          {
-            role: "system",
-            content: prdPartSystemPrompt(partNum, !!partResearch),
-          },
-          {
-            role: "user",
-            content: `${sharedContext}${partResearch}\nTEMPLATE PART ${partNum} OF 3 TO FILL:\n${templateParts[i]}`,
-          },
-        ],
-      });
-
-      let partContent = "";
-      for await (const chunk of stream) {
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) {
-          partContent += delta;
+        let partContent = "";
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta?.content;
+          if (delta) {
+            partContent += delta;
+            send("section_delta", { id, delta });
+          }
         }
+
+        send("section", { id, status: "awaiting_approval", message: partMeta[i].validating });
+        partContent = cleanPrdMarkdown(partContent);
+        assertPrdQuality(partContent, `part ${partNum}`);
+
+        send("section_content", { id, content: partContent });
+        send("section", { id, status: "approved", message: partMeta[i].done });
+        console.log(`[generate-prd] ${id} approved (${partContent.length} chars)`);
+        parts.push(partContent);
       }
+      return parts;
+    };
 
-      partContent = cleanPrdMarkdown(partContent);
-      assertPrdQuality(partContent, `part ${partNum}`);
-      send("chunk", { part: partNum, content: partContent });
+    const [researchSections, prdParts] = await Promise.all([
+      runResearch(prompt, modifiedClassification, send),
+      runPrdParts(),
+    ]);
 
-      if (i < templateParts.length - 1) {
-        send("chunk", { part: partNum, content: "\n\n" });
-        partContent += "\n\n";
-      }
-
-      fullMarkdown += partContent;
-      console.log(
-        `[generate-prd] part ${partNum}/3 done (${partContent.length} chars)`
-      );
-    }
-
+    // ── Phase 3: Assemble + validate the final document ──────────
+    let fullMarkdown = assembleDocument(prdParts, researchSections);
     fullMarkdown = cleanPrdMarkdown(fullMarkdown);
     assertPrdQuality(fullMarkdown, "full PRD");
+
+    send("status", { phase: "done", message: "PRD ready" });
+    send("replace", { docId: "prd", title: "PRD", content: fullMarkdown });
     send("done", {});
-    res.end();
+    end();
   } catch (err) {
     console.error(`[/api/generate-prd] ${err.message}`);
     send("error", { message: err.message });
-    res.end();
+    end();
+  }
+});
+
+// ── Step 4: System Design + Test Spec (SSE, yellow stage) ─────────────────────
+
+app.post("/api/generate-design", async (req, res) => {
+  const prompt = (req.body.prompt || "").trim();
+  const classification = req.body.classification;
+  const prd = (req.body.prd || "").trim();
+  const notes = req.body.notes;
+  if (!prompt || !classification || !prd)
+    return res.status(400).json({ error: "Missing prompt, classification, or prd" });
+
+  const { send, end } = openSse(res);
+  try {
+    const sharedContext = buildDownstreamContext({ prompt, classification, prd, notes });
+    send("status", { phase: "generating", message: "Designing the system…" });
+    for (const doc of DOC_SETS.design) {
+      await streamDocParts(send, doc, sharedContext);
+    }
+    send("status", { phase: "done", message: "System design & test spec ready" });
+    send("done", {});
+    end();
+  } catch (err) {
+    console.error(`[/api/generate-design] ${err.message}`);
+    send("error", { message: err.message });
+    end();
+  }
+});
+
+// ── Step 5: Sprint Backlog (SSE, green stage) ─────────────────────────────────
+
+app.post("/api/generate-backlog", async (req, res) => {
+  const prompt = (req.body.prompt || "").trim();
+  const classification = req.body.classification;
+  const prd = (req.body.prd || "").trim();
+  const systemDesign = (req.body.systemDesign || "").trim();
+  const testSpec = (req.body.testSpec || "").trim();
+  const notes = req.body.notes;
+  if (!prompt || !classification || !prd)
+    return res.status(400).json({ error: "Missing prompt, classification, or prd" });
+
+  const { send, end } = openSse(res);
+  try {
+    const sharedContext = buildDownstreamContext({
+      prompt,
+      classification,
+      prd,
+      extra: { "SYSTEM DESIGN": systemDesign, "TEST SPECIFICATION": testSpec },
+      notes,
+    });
+    send("status", { phase: "generating", message: "Planning the sprint backlog…" });
+    for (const doc of DOC_SETS.backlog) {
+      await streamDocParts(send, doc, sharedContext);
+    }
+    send("status", { phase: "done", message: "Sprint backlog ready" });
+    send("done", {});
+    end();
+  } catch (err) {
+    console.error(`[/api/generate-backlog] ${err.message}`);
+    send("error", { message: err.message });
+    end();
   }
 });
 
@@ -508,7 +763,9 @@ async function start() {
   });
 }
 
-start().catch((err) => {
-  console.error(`[server] Startup failed: ${err.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  start().catch((err) => {
+    console.error(`[server] Startup failed: ${err.message}`);
+    process.exit(1);
+  });
+}
