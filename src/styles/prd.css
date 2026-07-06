@@ -74,3 +74,108 @@
   font-weight: 600;
   color: var(--foreground);
 }
+
+.prd-editor {
+  min-height: calc(100vh - 250px);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  background: var(--background);
+  padding: 1.25rem;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+}
+
+.prd-editor:focus {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+
+.editor-tool {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+  border: 1px solid transparent;
+  background: transparent;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.editor-tool:hover {
+  color: var(--foreground);
+  background: var(--muted);
+  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+@media print {
+  @page {
+    size: Letter;
+    margin: 0.65in;
+  }
+
+  .prd-doc {
+    color: #111827;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .prd-doc h1 {
+    font-size: 24px;
+    margin: 0 0 14px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .prd-doc h1:not(:first-of-type) {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .prd-doc h2 {
+    font-size: 17px;
+    margin: 20px 0 8px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .prd-doc h3 {
+    font-size: 13px;
+    margin: 14px 0 6px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .prd-doc p,
+  .prd-doc li,
+  .prd-doc blockquote,
+  .prd-doc pre {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    orphans: 3;
+    widows: 3;
+  }
+
+  .prd-doc ul,
+  .prd-doc ol,
+  .prd-doc table {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .prd-doc table {
+    font-size: 8px;
+    margin: 10px 0 14px;
+  }
+
+  .prd-doc thead,
+  .prd-doc tbody,
+  .prd-doc tr,
+  .prd-doc th,
+  .prd-doc td {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .prd-doc th,
+  .prd-doc td {
+    padding: 3px 4px;
+  }
+}
