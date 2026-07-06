@@ -1,0 +1,76 @@
+.prd-doc h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  margin: 1.4rem 0 0.6rem;
+  color: var(--foreground);
+  line-height: 1.25;
+}
+.prd-doc h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 1.4rem 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+}
+.prd-doc h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.4rem;
+  color: var(--foreground);
+}
+.prd-doc p {
+  margin: 0.5rem 0;
+}
+.prd-doc ul,
+.prd-doc ol {
+  margin: 0.5rem 0 0.5rem 1.2rem;
+  list-style: revert;
+}
+.prd-doc li {
+  margin: 0.25rem 0;
+}
+.prd-doc a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.prd-doc strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.prd-doc code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+}
+.prd-doc hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.4rem 0;
+}
+.prd-doc blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 0.9rem;
+  margin: 0.7rem 0;
+  color: var(--muted-foreground);
+}
+.prd-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8rem 0;
+  font-size: 0.85rem;
+}
+.prd-doc th,
+.prd-doc td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+.prd-doc th {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  font-weight: 600;
+  color: var(--foreground);
+}

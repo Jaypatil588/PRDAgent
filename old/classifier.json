@@ -1,0 +1,706 @@
+{
+  "name": "prd_prompt_classifier_call",
+  "purpose": "Classify a user's raw product requirement prompt before PRD generation. This call must only return classification tags, confidence, assumptions, and missing-context tags. It must not generate PRD content, ask follow-up questions, design architecture, or create sprint tasks.",
+  "model": "gpt-5.5-thinking",
+  "temperature": 0.1,
+  "input": {
+    "user_prompt": "{{USER_PROMPT}}"
+  },
+  "system_prompt": "You are a PRD intake classifier. Your only job is to classify the user's raw product idea or requirement into structured tags that will be used by a later question-generation step. Do not generate a PRD. Do not ask questions. Do not provide explanations. Do not include system design, architecture, database, API, sprint planning, implementation details, or recommendations. Return only valid JSON matching the schema.",
+  "user_prompt_template": "Classify this product requirement prompt into structured PRD intake tags only:\n\n{{USER_PROMPT}}",
+  "response_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "classification_version",
+      "input_summary",
+      "intent_types",
+      "product_domains",
+      "platforms",
+      "primary_user_types",
+      "secondary_user_types",
+      "lifecycle_stage",
+      "requirement_depth",
+      "complexity_level",
+      "enterprise_readiness_level",
+      "ai_involvement",
+      "data_sensitivity",
+      "risk_profile",
+      "compliance_profile",
+      "integration_profile",
+      "collaboration_needs",
+      "output_document_flow",
+      "recommended_question_packs",
+      "missing_context_tags",
+      "assumptions",
+      "confidence"
+    ],
+    "properties": {
+      "classification_version": {
+        "type": "string",
+        "enum": ["prd-classifier-v1"]
+      },
+      "input_summary": {
+        "type": "string",
+        "description": "One short neutral summary of what the user appears to want. No PRD content."
+      },
+      "intent_types": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "new_product",
+            "new_feature",
+            "feature_improvement",
+            "internal_tool",
+            "workflow_automation",
+            "ai_enabled_product",
+            "data_analytics_product",
+            "developer_tool",
+            "integration",
+            "migration",
+            "marketplace",
+            "consumer_app",
+            "enterprise_platform",
+            "compliance_security_feature",
+            "content_management_system",
+            "customer_support_tool",
+            "education_tool",
+            "other"
+          ]
+        }
+      },
+      "product_domains": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "saas",
+            "enterprise_software",
+            "consumer_app",
+            "education",
+            "healthcare",
+            "fintech",
+            "ecommerce",
+            "marketplace",
+            "social_community",
+            "productivity",
+            "developer_tools",
+            "ai_ml",
+            "data_platform",
+            "cybersecurity",
+            "logistics",
+            "hr_recruiting",
+            "customer_support",
+            "content_publishing",
+            "media_entertainment",
+            "gaming",
+            "iot_embedded",
+            "public_sector",
+            "campus_university",
+            "other"
+          ]
+        }
+      },
+      "platforms": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "web_app",
+            "mobile_app",
+            "responsive_web",
+            "desktop_app",
+            "browser_extension",
+            "api_backend",
+            "internal_dashboard",
+            "admin_console",
+            "cli_tool",
+            "chat_interface",
+            "voice_interface",
+            "embedded_iot",
+            "third_party_plugin",
+            "multi_platform",
+            "unknown"
+          ]
+        }
+      },
+      "primary_user_types": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "consumer",
+            "student",
+            "teacher_faculty",
+            "employee",
+            "business_user",
+            "admin",
+            "operator",
+            "developer",
+            "analyst",
+            "manager",
+            "executive",
+            "support_agent",
+            "customer",
+            "seller",
+            "buyer",
+            "visitor_guest",
+            "patient",
+            "provider",
+            "recruiter",
+            "candidate",
+            "unknown"
+          ]
+        }
+      },
+      "secondary_user_types": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "approver",
+            "reviewer",
+            "support_agent",
+            "operator",
+            "developer",
+            "analyst",
+            "manager",
+            "executive",
+            "legal_security",
+            "compliance_team",
+            "customer_success",
+            "external_partner",
+            "none_identified",
+            "unknown"
+          ]
+        }
+      },
+      "lifecycle_stage": {
+        "type": "string",
+        "enum": [
+          "idea_discovery",
+          "requirements_gathering",
+          "mvp",
+          "v1_launch",
+          "existing_product_improvement",
+          "redesign",
+          "migration",
+          "scaling",
+          "enterprise_hardening",
+          "compliance_review",
+          "production_issue",
+          "unknown"
+        ]
+      },
+      "requirement_depth": {
+        "type": "string",
+        "enum": [
+          "basic_prd",
+          "standard_prd",
+          "enterprise_prd",
+          "unknown"
+        ]
+      },
+      "complexity_level": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "very_high",
+          "unknown"
+        ]
+      },
+      "enterprise_readiness_level": {
+        "type": "string",
+        "enum": [
+          "not_enterprise",
+          "team_use",
+          "department_use",
+          "large_org_use",
+          "regulated_enterprise",
+          "unknown"
+        ]
+      },
+      "ai_involvement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uses_ai",
+          "ai_roles",
+          "ai_risk_level"
+        ],
+        "properties": {
+          "uses_ai": {
+            "type": "boolean"
+          },
+          "ai_roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "none",
+                "chatbot",
+                "classification",
+                "recommendation",
+                "content_generation",
+                "summarization",
+                "search_retrieval",
+                "document_generation",
+                "decision_support",
+                "automation_agent",
+                "image_audio_video_generation",
+                "prediction_scoring",
+                "unknown"
+              ]
+            }
+          },
+          "ai_risk_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "data_sensitivity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "level",
+          "data_types"
+        ],
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "public",
+              "internal",
+              "confidential",
+              "restricted",
+              "regulated",
+              "unknown"
+            ]
+          },
+          "data_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "none_identified",
+                "user_profile",
+                "email",
+                "phone",
+                "address",
+                "payment_data",
+                "health_data",
+                "education_records",
+                "employment_data",
+                "business_confidential",
+                "api_keys_secrets",
+                "usage_analytics",
+                "uploaded_documents",
+                "chat_messages",
+                "location_data",
+                "behavioral_data",
+                "unknown"
+              ]
+            }
+          }
+        }
+      },
+      "risk_profile": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "low_risk",
+            "pii",
+            "payments",
+            "regulated_data",
+            "ai_hallucination",
+            "ai_bias",
+            "security_sensitive",
+            "enterprise_access_control",
+            "auditability_required",
+            "high_availability_required",
+            "external_api_dependency",
+            "data_loss_risk",
+            "user_generated_content",
+            "content_moderation",
+            "legal_review_needed",
+            "safety_critical",
+            "operational_dependency",
+            "unknown"
+          ]
+        }
+      },
+      "compliance_profile": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "none_identified",
+            "gdpr_possible",
+            "ccpa_possible",
+            "ferpa_possible",
+            "hipaa_possible",
+            "pci_possible",
+            "soc2_expected",
+            "iso27001_expected",
+            "accessibility_wcag",
+            "internal_policy_review",
+            "legal_review",
+            "security_review",
+            "unknown"
+          ]
+        }
+      },
+      "integration_profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "integration_likelihood",
+          "likely_integrations"
+        ],
+        "properties": {
+          "integration_likelihood": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "unknown"
+            ]
+          },
+          "likely_integrations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "none_identified",
+                "sso",
+                "email",
+                "calendar",
+                "slack_teams",
+                "jira",
+                "github",
+                "azure_devops",
+                "crm",
+                "cms",
+                "payment_processor",
+                "analytics",
+                "database",
+                "file_storage",
+                "knowledge_base",
+                "llm_provider",
+                "vector_search",
+                "internal_apis",
+                "third_party_apis",
+                "webhooks",
+                "unknown"
+              ]
+            }
+          }
+        }
+      },
+      "collaboration_needs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "single_user",
+            "team_comments",
+            "shared_editing",
+            "approval_workflow",
+            "version_history",
+            "role_based_permissions",
+            "audit_logs",
+            "stakeholder_summary",
+            "export_pdf",
+            "export_ppt",
+            "ticketing_handoff",
+            "unknown"
+          ]
+        }
+      },
+      "output_document_flow": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "prd_only",
+            "prd_then_system_design",
+            "prd_then_system_design_then_sprint_plan",
+            "prd_then_tickets",
+            "unknown"
+          ]
+        }
+      },
+      "recommended_question_packs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "problem_outcome",
+            "target_users",
+            "personas",
+            "current_workflow",
+            "use_cases",
+            "scope_non_goals",
+            "functional_requirements",
+            "user_experience",
+            "data_requirements",
+            "roles_permissions",
+            "integrations",
+            "analytics_success_metrics",
+            "ai_behavior",
+            "security_privacy",
+            "compliance",
+            "enterprise_collaboration",
+            "accessibility",
+            "edge_cases",
+            "risks_dependencies",
+            "launch_rollout",
+            "pricing_packaging",
+            "market_competitor_context"
+          ]
+        }
+      },
+      "missing_context_tags": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "problem_not_clear",
+            "target_users_missing",
+            "business_goal_missing",
+            "success_metrics_missing",
+            "scope_missing",
+            "non_goals_missing",
+            "platform_missing",
+            "domain_missing",
+            "user_flow_missing",
+            "functional_requirements_missing",
+            "data_requirements_missing",
+            "privacy_requirements_missing",
+            "security_requirements_missing",
+            "compliance_requirements_missing",
+            "ai_behavior_missing",
+            "integrations_missing",
+            "roles_permissions_missing",
+            "collaboration_model_missing",
+            "edge_cases_missing",
+            "dependencies_missing",
+            "timeline_missing",
+            "acceptance_criteria_missing",
+            "unknown"
+          ]
+        }
+      },
+      "assumptions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "confidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "overall",
+          "intent",
+          "domain",
+          "platform",
+          "users",
+          "risk"
+        ],
+        "properties": {
+          "overall": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "intent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "domain": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "platform": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "users": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "risk": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    }
+  },
+  "expected_output_example": {
+    "classification_version": "prd-classifier-v1",
+    "input_summary": "User wants to build a website that generates PRDs, then system design documents, then sprint plans from product ideas.",
+    "intent_types": [
+      "new_product",
+      "ai_enabled_product",
+      "enterprise_platform",
+      "workflow_automation",
+      "developer_tool"
+    ],
+    "product_domains": [
+      "saas",
+      "enterprise_software",
+      "productivity",
+      "developer_tools",
+      "ai_ml"
+    ],
+    "platforms": [
+      "web_app",
+      "responsive_web",
+      "chat_interface",
+      "admin_console"
+    ],
+    "primary_user_types": [
+      "business_user",
+      "manager",
+      "developer"
+    ],
+    "secondary_user_types": [
+      "reviewer",
+      "approver",
+      "executive",
+      "legal_security"
+    ],
+    "lifecycle_stage": "idea_discovery",
+    "requirement_depth": "enterprise_prd",
+    "complexity_level": "high",
+    "enterprise_readiness_level": "large_org_use",
+    "ai_involvement": {
+      "uses_ai": true,
+      "ai_roles": [
+        "classification",
+        "document_generation",
+        "summarization",
+        "chatbot",
+        "search_retrieval"
+      ],
+      "ai_risk_level": "medium"
+    },
+    "data_sensitivity": {
+      "level": "confidential",
+      "data_types": [
+        "uploaded_documents",
+        "chat_messages",
+        "business_confidential",
+        "usage_analytics"
+      ]
+    },
+    "risk_profile": [
+      "ai_hallucination",
+      "security_sensitive",
+      "enterprise_access_control",
+      "auditability_required",
+      "data_loss_risk"
+    ],
+    "compliance_profile": [
+      "soc2_expected",
+      "accessibility_wcag",
+      "security_review",
+      "legal_review"
+    ],
+    "integration_profile": {
+      "integration_likelihood": "high",
+      "likely_integrations": [
+        "sso",
+        "jira",
+        "github",
+        "azure_devops",
+        "file_storage",
+        "knowledge_base",
+        "llm_provider",
+        "analytics"
+      ]
+    },
+    "collaboration_needs": [
+      "team_comments",
+      "shared_editing",
+      "approval_workflow",
+      "version_history",
+      "role_based_permissions",
+      "audit_logs",
+      "stakeholder_summary",
+      "export_pdf",
+      "export_ppt",
+      "ticketing_handoff"
+    ],
+    "output_document_flow": [
+      "prd_then_system_design_then_sprint_plan"
+    ],
+    "recommended_question_packs": [
+      "problem_outcome",
+      "target_users",
+      "use_cases",
+      "scope_non_goals",
+      "functional_requirements",
+      "user_experience",
+      "data_requirements",
+      "roles_permissions",
+      "integrations",
+      "analytics_success_metrics",
+      "ai_behavior",
+      "security_privacy",
+      "enterprise_collaboration",
+      "accessibility",
+      "risks_dependencies",
+      "launch_rollout",
+      "market_competitor_context"
+    ],
+    "missing_context_tags": [
+      "target_users_missing",
+      "success_metrics_missing",
+      "scope_missing",
+      "user_flow_missing",
+      "functional_requirements_missing",
+      "data_requirements_missing",
+      "privacy_requirements_missing",
+      "security_requirements_missing",
+      "integrations_missing",
+      "roles_permissions_missing",
+      "collaboration_model_missing",
+      "acceptance_criteria_missing"
+    ],
+    "assumptions": [
+      "The product is intended for product and engineering teams.",
+      "The PRD is meant to be approved before generating system design.",
+      "The product may eventually support enterprise collaboration and ticketing integrations."
+    ],
+    "confidence": {
+      "overall": 0.86,
+      "intent": 0.94,
+      "domain": 0.88,
+      "platform": 0.8,
+      "users": 0.72,
+      "risk": 0.76
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+    "name": "prd_classifier",
+    "model": "compound",
+    "temperature": 0.1,
+    "system_prompt": "Classify the product prompt into tags per schema. No PRD content, questions, or design. JSON only.",
+    "user_prompt_template": "{{USER_PROMPT}}",
+    "response_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "summary",
+            "intent",
+            "platforms",
+            "users",
+            "stage",
+            "complexity",
+            "ai_risk",
+            "data_sensitivity",
+            "risk_flags",
+            "missing_context",
+            "confidence"
+        ],
+        "properties": {
+            "summary": {
+                "type": "string"
+            },
+            "intent": {
+                "type": "string",
+                "enum": [
+                    "new_product",
+                    "new_feature",
+                    "improvement",
+                    "internal_tool",
+                    "integration",
+                    "other"
+                ]
+            },
+            "platforms": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "web",
+                        "mobile",
+                        "desktop",
+                        "api",
+                        "cli",
+                        "chat",
+                        "unknown"
+                    ]
+                }
+            },
+            "users": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "maxItems": 3
+            },
+            "stage": {
+                "type": "string",
+                "enum": [
+                    "idea",
+                    "mvp",
+                    "improvement",
+                    "scaling",
+                    "unknown"
+                ]
+            },
+            "complexity": {
+                "type": "string",
+                "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                ]
+            },
+            "ai_risk": {
+                "type": "string",
+                "enum": [
+                    "none",
+                    "low",
+                    "medium",
+                    "high"
+                ]
+            },
+            "data_sensitivity": {
+                "type": "string",
+                "enum": [
+                    "public",
+                    "internal",
+                    "confidential",
+                    "regulated"
+                ]
+            },
+            "risk_flags": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "pii",
+                        "payments",
+                        "regulated_data",
+                        "ai_hallucination",
+                        "security",
+                        "auditability",
+                        "external_dependency",
+                        "safety_critical"
+                    ]
+                }
+            },
+            "missing_context": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "problem",
+                        "users",
+                        "goal",
+                        "metrics",
+                        "scope",
+                        "platform",
+                        "requirements",
+                        "data",
+                        "privacy_security",
+                        "compliance",
+                        "integrations",
+                        "roles",
+                        "timeline",
+                        "acceptance_criteria"
+                    ]
+                }
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+            }
+        }
+    }
+}
