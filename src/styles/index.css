@@ -15,7 +15,7 @@
   left: 50%;
   width: 120vh; 
   height: 120vh;
-  background: radial-gradient(circle closest-side, rgba(37,99,235,0.45) 0%, rgba(37,99,235,0.15) 45%, transparent 100%);
+  background: radial-gradient(circle closest-side, var(--glow-color) 0%, color-mix(in srgb, var(--glow-color) 33%, transparent) 45%, transparent 100%);
   transform: translate(-50%, -50%);
   pointer-events: none;
   animation: breathe 10s ease-in-out infinite;
