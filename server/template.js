@@ -22,6 +22,11 @@ export function cleanTemplateForGeneration(template) {
       continue;
     }
     if (/^>\s*Repeat per use case/i.test(line)) continue;
+    if (/Each use case must be grounded in real, documented problems/i.test(line)) continue;
+    if (/Source:\s*\(link\/report\)/i.test(line)) {
+      cleaned.push(rawLine.replace(/\s*Source:\s*\(link\/report\)/i, ""));
+      continue;
+    }
 
     if (/^Each requirement must:/i.test(line)) {
       skippingRequirementRules = true;
@@ -55,9 +60,9 @@ export function cleanTemplateForGeneration(template) {
 
 /**
  * Split template into 3 parts for generation:
- *   Part 1: §0 (exec summary) + §1-§4  (needs use_cases, metrics, scope research)
- *   Part 2: §5-§7                       (needs compliance research)
- *   Part 3: §8-§12                      (no research needed)
+ *   Part 1: §0 (exec summary) + §1-§4
+ *   Part 2: §5-§7
+ *   Part 3: §8-§12
  *
  * Splits at "# 5." and "# 8."
  */
