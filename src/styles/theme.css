@@ -31,6 +31,7 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --radius: 0.625rem;
+  --glow-color: rgba(26, 111, 189, 0.35);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: #030213;
@@ -61,6 +62,7 @@
   --border: #1e293b;
   --input: #111111;
   --ring: #3b82f6;
+  --glow-color: rgba(59, 130, 246, 0.45);
   --font-weight-medium: 500;
   --font-weight-normal: 400;
   --sidebar: #0a0a0a;
@@ -71,6 +73,33 @@
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: #1e293b;
   --sidebar-ring: #3b82f6;
+}
+
+/* ── Stage accents ────────────────────────────────────────────────────────────
+   The whole-site accent (and background glow) shifts per pipeline stage.
+   data-stage is set on <html>; :root[data-stage] (0,2,0) outranks .dark (0,1,0),
+   so these override the accent in dark mode without touching neutrals. */
+:root[data-stage="design"] {
+  --primary: #f5b700;              /* yellow */
+  --primary-foreground: #0a0a0a;   /* black text on yellow */
+  --accent: #f5b700;
+  --accent-foreground: #0a0a0a;
+  --ring: #f5b700;
+  --sidebar-primary: #f5b700;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-ring: #f5b700;
+  --glow-color: rgba(245, 183, 0, 0.4);
+}
+:root[data-stage="backlog"] {
+  --primary: #22c55e;              /* green */
+  --primary-foreground: #0a0a0a;   /* black text on green */
+  --accent: #22c55e;
+  --accent-foreground: #0a0a0a;
+  --ring: #22c55e;
+  --sidebar-primary: #22c55e;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-ring: #22c55e;
+  --glow-color: rgba(34, 197, 94, 0.38);
 }
 
 @theme inline {
