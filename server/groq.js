@@ -16,10 +16,21 @@ const groq = new OpenAI({
 
 /**
  * Parse retry-after seconds from a Groq 429 error message.
+ * Handles both "try again in 12.5s" and "try again in 20m15.648s".
  */
 function retrySeconds(message) {
-  const m = message.match(/try again in ([\d.]+)s/i);
-  return m ? Math.ceil(parseFloat(m[1])) + 2 : 30;
+  const m = message.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
+  if (!m) return 30;
+  const minutes = m[1] ? parseInt(m[1], 10) : 0;
+  return Math.ceil(minutes * 60 + parseFloat(m[2])) + 2;
+}
+
+/**
+ * A daily (TPD) or otherwise long rate limit can't be waited out inside a
+ * request — fail fast with the clear message instead of hanging on retries.
+ */
+function isUnretryableRateLimit(message, waitSeconds) {
+  return /per day|tokens per day|\bTPD\b|requests per day|\bRPD\b/i.test(message) || waitSeconds > 90;
 }
 
 /**
@@ -50,23 +61,32 @@ export async function completeWithRetry(label, params, maxAttempts = 4) {
       lastErr = message;
       const status = err.status || err.statusCode;
 
-      // 429 rate limit — wait and retry
+      // 429 rate limit — wait and retry, unless it's a daily/long limit.
       if (status === 429 && attempt < maxAttempts) {
         const wait = retrySeconds(message);
+        if (isUnretryableRateLimit(message, wait)) {
+          throw new Error(`${label}: Groq quota reached — ${message}`);
+        }
         console.log(
           `[${label}] 429 — waiting ${wait}s (attempt ${attempt}/${maxAttempts})`
         );
         await new Promise((r) => setTimeout(r, wait * 1000));
         continue;
       }
-      // 400 schema validation — retry once
+      // 400 structured-output validation failure — regenerate. Groq reports this
+      // as either "does not match the expected schema" or the constrained-decoding
+      // variant "Failed to validate JSON" (code json_validate_failed). Both are
+      // non-deterministic model failures that a fresh generation usually clears.
+      const code = err.code || err.error?.code || "";
       if (
         status === 400 &&
-        message.includes("does not match the expected schema") &&
+        (message.includes("does not match the expected schema") ||
+          message.includes("Failed to validate JSON") ||
+          code === "json_validate_failed") &&
         attempt < maxAttempts
       ) {
         console.log(
-          `[${label}] schema validation 400 — regenerating (attempt ${attempt}/${maxAttempts})`
+          `[${label}] structured-output 400 — regenerating (attempt ${attempt}/${maxAttempts})`
         );
         continue;
       }
@@ -96,6 +116,9 @@ export async function completeStream(label, params, maxAttempts = 4) {
       const status = err.status || err.statusCode;
       if (status === 429 && attempt < maxAttempts) {
         const wait = retrySeconds(message);
+        if (isUnretryableRateLimit(message, wait)) {
+          throw new Error(`${label}: Groq quota reached — ${message}`);
+        }
         console.log(
           `[${label}] 429 — waiting ${wait}s (attempt ${attempt}/${maxAttempts})`
         );
