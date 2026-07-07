@@ -26,6 +26,9 @@ import {
   MODEL_PRD,
   MODEL_SEARCH,
   MODEL_ENUM,
+  MAX_INPUT_TOKENS,
+  estimateTokens,
+  capTokens,
 } from "./groq.js";
 import { runResearch } from "./research.js";
 import { templateParts } from "./template.js";
@@ -220,7 +223,7 @@ function parseQuestionsJson(content) {
 function prdPartSystemPrompt(part) {
   const partNote =
     part === 1
-      ? `\n- The template's title line says "Modular PRD Template: [Product / Feature Name]" — replace the ENTIRE line with "# <actual product name> — PRD".`
+      ? `\n- The template's title line says "Modular PRD Template: [Product / Feature Name]" — replace the ENTIRE line with "# <actual product name> — PRD".\n- The author/owner line must be exactly "Jay Patil — <current date>" using YYYY-MM-DD for the date.`
       : `\n- Do not add a document title or executive summary — that exists in an earlier part. Start directly with the first section of your template part.`;
 
   return `You are a product manager writing ONE PART of a larger PRD. The full PRD is produced in 3 parts by separate calls and concatenated afterwards; you are writing PART ${part} of 3.
@@ -257,7 +260,7 @@ const PRD_QUALITY_RULES = [
   {
     label: "unfilled template placeholder",
     pattern:
-      /\[(?:Product|Feature|Author|Owner|Date|One sentence|Primary users|Core problem|Urgency|Top|Major|user|main action|main benefit|Name|Task \d|Non-goal|Item|Reason|Assumption|Dependency|Question)[^\]\n]*\]/i,
+      /\[(?:Product\s*\/\s*Feature Name|Author\s*\/\s*Owner|Date|One sentence|Primary users|Core problem|Urgency\s*\/\s*signal\s*\/\s*timing|Top 1[–-]3 outcomes\s*[—-]\s*reference §3 metrics|Major exclusions\s*[—-]\s*reference §4|user|main action|main benefit|Name|Narrative:[^\]\n]*|Task \d+|Non-goal \d+|Assumption \d+|Dependency \d+|Question \d+)\]/i,
   },
 ];
 
@@ -332,6 +335,14 @@ function assertPrdQuality(markdown, label) {
   }
 }
 
+function stripMarkdownFences(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^```(?:markdown|md)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
 // Assemble the final document from the independently-generated sections.
 // Order: overview (part 1) → research evidence → requirements (part 2) → rollout (part 3).
 function assembleDocument(prdParts, researchSections) {
@@ -385,6 +396,11 @@ function formatNotes(notes) {
   );
 }
 
+// Reserve for the system prompt + section outline + streamed completion so the
+// grounding never pushes the whole request past the model's per-minute ceiling.
+const CONTEXT_TOKEN_RESERVE = 5200;
+const MAX_CONTEXT_TOKENS = Math.max(1000, MAX_INPUT_TOKENS - CONTEXT_TOKEN_RESERVE);
+
 // Bounded grounding context for downstream docs (respects the 120b TPM budget).
 function buildDownstreamContext({ prompt, classification, prd, extra = {}, notes }) {
   let ctx =
@@ -394,7 +410,46 @@ function buildDownstreamContext({ prompt, classification, prd, extra = {}, notes
   for (const [key, value] of Object.entries(extra)) {
     if (value) ctx += `${key} (grounding — may be truncated):\n${String(value).substring(0, 5000)}\n\n`;
   }
-  return ctx + formatNotes(notes);
+  return capTokens(ctx + formatNotes(notes), MAX_CONTEXT_TOKENS);
+}
+
+// Compact a markdown doc down to its "important parts": headings plus the first
+// couple of content lines under each. Used to squeeze upstream docs into a tiny
+// grounding budget without dropping structure.
+function compactMarkdown(markdown, maxTokens) {
+  const out = [];
+  let sinceHeading = 0;
+  for (const raw of String(markdown || "").split("\n")) {
+    const line = raw.trimEnd();
+    if (/^#{1,4}\s/.test(line)) {
+      out.push(line);
+      sinceHeading = 0;
+      continue;
+    }
+    if (!line.trim()) continue;
+    if (sinceHeading < 2) {
+      out.push(line);
+      sinceHeading++;
+    }
+  }
+  return capTokens(out.join("\n"), maxTokens);
+}
+
+// The sprint backlog only needs a compact skeleton of the PRD + System Design.
+// Combined grounding is held under BACKLOG_GROUNDING_TOKENS so the request stays
+// well within the model's TPM ceiling. Test spec is intentionally excluded.
+const BACKLOG_GROUNDING_TOKENS = 2000;
+function buildBacklogContext({ prompt, classification, prd, systemDesign, notes }) {
+  const half = Math.floor(BACKLOG_GROUNDING_TOKENS / 2);
+  const prdCompact = compactMarkdown(prd, half);
+  const designCompact = compactMarkdown(systemDesign, BACKLOG_GROUNDING_TOKENS - estimateTokens(prdCompact));
+  const ctx =
+    `ORIGINAL PROMPT:\n${prompt.substring(0, 800)}\n\n` +
+    `CLASSIFICATION (JSON):\n${JSON.stringify(classification)}\n\n` +
+    `PRD (compacted — key sections only):\n${prdCompact}\n\n` +
+    `SYSTEM DESIGN (compacted — key sections only):\n${designCompact}\n\n` +
+    formatNotes(notes);
+  return capTokens(ctx, MAX_CONTEXT_TOKENS);
 }
 
 // Generate one document by streaming its fixed parts as live sections, then
@@ -429,13 +484,12 @@ async function streamDocParts(send, doc, sharedContext) {
       }
     }
 
-    send("section", { id, doc: doc.docId, title: part.title, status: "awaiting_approval", message: `Reviewing ${action}…` });
     content = cleanPrdMarkdown(content);
     if (content.trim().length < 50) {
       throw new Error(`${doc.docId}/${id}: model returned near-empty content`);
     }
     send("section_content", { id, content });
-    send("section", { id, doc: doc.docId, title: part.title, status: "approved", message: `Completed ${action}` });
+    send("section", { id, doc: doc.docId, title: part.title, status: "done", message: `Completed ${action}` });
     console.log(`[${doc.docId}] ${id} approved (${content.length} chars)`);
     partContents.push(content);
   }
@@ -524,6 +578,55 @@ app.post("/api/questions", async (req, res) => {
   }
 });
 
+// ── Targeted selection revision (no full regeneration) ────────────────────────
+
+app.post("/api/revise-selection", async (req, res) => {
+  const doc = String(req.body.doc || "").trim();
+  const selectedText = String(req.body.selectedText || "").trim();
+  const instruction = String(req.body.instruction || "").trim();
+  const docTitle = String(req.body.docTitle || "Document").trim();
+
+  if (!doc || !selectedText || !instruction) {
+    return res.status(400).json({ error: "Missing doc, selectedText, or instruction" });
+  }
+
+  try {
+    const content = await completeWithRetry("revise-selection", {
+      model: MODEL_PRD,
+      reasoning_effort: "low",
+      temperature: 0.1,
+      max_completion_tokens: 900,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You revise a SINGLE selected excerpt inside a larger markdown document. " +
+            "Return ONLY the revised replacement text for the selected excerpt in markdown. " +
+            "Do not rewrite other parts of the document. Do not add headings, notes, or code fences.",
+        },
+        {
+          role: "user",
+          content:
+            `DOCUMENT TITLE:\n${docTitle}\n\n` +
+            `FULL DOCUMENT (for context):\n${doc.substring(0, 24000)}\n\n` +
+            `SELECTED EXCERPT TO REVISE:\n${selectedText}\n\n` +
+            `REVISION INSTRUCTION:\n${instruction}\n\n` +
+            "Output only the revised replacement text for the selected excerpt.",
+        },
+      ],
+    });
+
+    const replacement = stripMarkdownFences(content);
+    if (!replacement) {
+      return res.status(502).json({ error: "Revision model returned empty content" });
+    }
+    res.json({ replacement });
+  } catch (err) {
+    console.error(`[/api/revise-selection] ${err.message}`);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── Step 2.5: Update Classification ───────────────────────────────────────────
 
 // ── Shared Utils ──────────────────────────────────────────────────────────────
@@ -598,17 +701,14 @@ app.post("/api/generate-prd", async (req, res) => {
   const partMeta = [
     {
       generating: "Drafting overview — problem, users, goals & scope",
-      validating: "Reviewing overview draft",
       done: "Completed overview",
     },
     {
       generating: "Drafting requirements & compliance",
-      validating: "Reviewing requirements draft",
       done: "Completed requirements & compliance",
     },
     {
       generating: "Drafting rollout, risks & acceptance criteria",
-      validating: "Reviewing final draft",
       done: "Completed rollout, risks & acceptance",
     },
   ];
@@ -658,12 +758,11 @@ app.post("/api/generate-prd", async (req, res) => {
           }
         }
 
-        send("section", { id, status: "awaiting_approval", message: partMeta[i].validating });
         partContent = cleanPrdMarkdown(partContent);
         assertPrdQuality(partContent, `part ${partNum}`);
 
         send("section_content", { id, content: partContent });
-        send("section", { id, status: "approved", message: partMeta[i].done });
+        send("section", { id, status: "done", message: partMeta[i].done });
         console.log(`[generate-prd] ${id} approved (${partContent.length} chars)`);
         parts.push(partContent);
       }
@@ -732,13 +831,8 @@ app.post("/api/generate-backlog", async (req, res) => {
 
   const { send, end } = openSse(res);
   try {
-    const sharedContext = buildDownstreamContext({
-      prompt,
-      classification,
-      prd,
-      extra: { "SYSTEM DESIGN": systemDesign, "TEST SPECIFICATION": testSpec },
-      notes,
-    });
+    const sharedContext = buildBacklogContext({ prompt, classification, prd, systemDesign, notes });
+    console.log(`[/api/generate-backlog] grounding ≈ ${estimateTokens(sharedContext)} input tokens`);
     send("status", { phase: "generating", message: "Planning the sprint backlog…" });
     for (const doc of DOC_SETS.backlog) {
       await streamDocParts(send, doc, sharedContext);

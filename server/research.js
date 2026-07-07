@@ -75,12 +75,6 @@ export async function runResearch(prompt, classification, send) {
 
   const results = [];
   for (const section of SECTIONS) {
-    send?.("section", {
-      id: section.id,
-      status: "awaiting_approval",
-      message: `Reviewing ${section.action} findings…`,
-    });
-
     const cleaned = cleanResearchMarkdown(parsed[section.id]);
     if (!cleaned) {
       throw new Error(`research: "${section.id}" missing or empty in model JSON`);
@@ -89,7 +83,7 @@ export async function runResearch(prompt, classification, send) {
     send?.("section_content", { id: section.id, content: cleaned });
     send?.("section", {
       id: section.id,
-      status: "approved",
+      status: "done",
       message: `Completed ${section.action} research`,
     });
 

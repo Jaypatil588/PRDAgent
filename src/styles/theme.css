@@ -1,6 +1,21 @@
 @custom-variant dark (&:is(.dark *));
 
+/* Register the accent + glow as animatable colors so stage changes (blue → yellow
+   → green) interpolate smoothly instead of snapping. Everything reads var(--primary)
+   / var(--glow-color), so animating these animates the whole site. */
+@property --primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #3b82f6;
+}
+@property --glow-color {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(59, 130, 246, 0.45);
+}
+
 :root {
+  transition: --primary 600ms ease, --glow-color 600ms ease;
   --font-size: 16px;
   --background: #f0f6ff;
   --foreground: #0d1b2e;
@@ -150,6 +165,7 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
 
   /**

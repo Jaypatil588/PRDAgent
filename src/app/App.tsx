@@ -1,11 +1,14 @@
 import { memo, useState, useRef, useEffect } from "react";
-import { ArrowUp, Sparkles, X, ChevronRight, Loader2, FileText, Menu, Plus, MessageSquare, Sun, Moon, Download, FileDown, Pencil, Eye, Bold, Italic, List, ListOrdered, Heading1, Heading2, Quote, Check, RefreshCw, Package } from "lucide-react";
+import { ArrowUp, Sparkles, X, ChevronRight, Loader2, FileText, Menu, Plus, MessageSquare, Sun, Moon, Download, FileDown, Pencil, Eye, Bold, Italic, List, ListOrdered, Heading1, Heading2, Quote, Check, RefreshCw, Package, ExternalLink } from "lucide-react";
 import { fonts } from "../config/fonts";
 
 
 const BLUE = "var(--color-primary)";
 const BLUE_LIGHT = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
 const BLUE_BORDER = "color-mix(in srgb, var(--color-primary) 32%, transparent)";
+
+// Single professional sans-serif stack used across the whole UI.
+const SANS = "'Geist', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,6 +42,22 @@ const STAGE_DOCS: Record<Stage, { id: string; title: string }[]> = {
 };
 
 const STAGE_ORDER: Stage[] = ["prd", "design", "backlog"];
+
+// Stage-level lifecycle status shown in the review-window header stepper.
+type StageStatus = "pending" | "generating" | "awaiting_approval" | "approved";
+
+const STAGE_STEP_LABEL: Record<Stage, string> = {
+  prd: "PRD",
+  design: "Design & Test",
+  backlog: "Sprint",
+};
+
+const STEP_META: Record<StageStatus, { label: string; dot: string; text: string; box: string }> = {
+  pending: { label: "Pending", dot: "bg-white/30", text: "text-muted-foreground", box: "border-white/10 bg-white/[0.03]" },
+  generating: { label: "Generating", dot: "bg-primary animate-pulse", text: "text-primary", box: "border-primary/40 bg-primary/10" },
+  awaiting_approval: { label: "Awaiting approval", dot: "bg-amber-400", text: "text-amber-300", box: "border-amber-500/40 bg-amber-500/10" },
+  approved: { label: "Approved", dot: "bg-emerald-400", text: "text-emerald-300", box: "border-emerald-500/40 bg-emerald-500/10" },
+};
 
 type Stage = "prd" | "design" | "backlog";
 
@@ -74,7 +93,7 @@ interface StoredPRD {
   createdAt: string;
 }
 
-type LiveBlockStatus = "pending" | "generating" | "awaiting_approval" | "approved";
+type LiveBlockStatus = "pending" | "generating" | "done";
 
 interface LiveBlock {
   id: string;
@@ -84,6 +103,20 @@ interface LiveBlock {
   content?: string;
   doc?: string;
 }
+
+interface InlineRevision {
+  id: string;
+  docId: string;
+  selectedText: string;
+  suggestion: string;
+  author: string;
+}
+
+interface ReviseSelectionResponse {
+  replacement: string;
+}
+
+const REVIEWER_NAME = "Jay Patil";
 
 const seed = (id: string, title: string): LiveBlock => ({
   id,
@@ -197,7 +230,7 @@ function ClassificationCard({ data }: { data: Record<string, unknown> }) {
 
   return (
     <div className="rounded-2xl bg-card p-3 flex items-center gap-4 overflow-x-auto hide-scrollbar border-[1.5px] border-primary/20 shadow-md shadow-primary/10 text-white">
-      <span className="text-[10px] uppercase tracking-widest font-bold whitespace-nowrap flex-none text-white" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+      <span className="text-[10px] uppercase tracking-widest font-bold whitespace-nowrap flex-none text-white" style={{ fontFamily: SANS }}>
         Classification
       </span>
       {chips.length > 0 ? chips.map((c, i) => (
@@ -211,6 +244,8 @@ function ClassificationCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// Mid-generation section states are progress-only — NOT approval. Approval is a
+// separate, post-generation human decision surfaced in the review header.
 const STATUS_META: Record<LiveBlockStatus, { label: string; card: string; badge: string; dot: string }> = {
   pending: {
     label: "pending",
@@ -220,26 +255,20 @@ const STATUS_META: Record<LiveBlockStatus, { label: string; card: string; badge:
   },
   generating: {
     label: "generating",
-    card: "border-sky-500/40 bg-sky-500/[0.06]",
-    badge: "border-sky-500/40 bg-sky-500/15 text-sky-300",
-    dot: "bg-sky-400",
+    card: "border-primary/40 bg-primary/[0.06]",
+    badge: "border-primary/40 bg-primary/15 text-primary",
+    dot: "bg-primary",
   },
-  awaiting_approval: {
-    label: "awaiting approval",
-    card: "border-amber-500/40 bg-amber-500/[0.06]",
-    badge: "border-amber-500/40 bg-amber-500/15 text-amber-300",
-    dot: "bg-amber-400",
-  },
-  approved: {
-    label: "approved",
-    card: "border-emerald-500/40 bg-emerald-500/[0.06]",
-    badge: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
-    dot: "bg-emerald-400",
+  done: {
+    label: "done",
+    card: "border-white/15 bg-white/[0.04]",
+    badge: "border-white/20 bg-white/10 text-foreground/80",
+    dot: "bg-foreground/50",
   },
 };
 
-// The live document: each section is a color-coded card that streams its own
-// content and transitions pending → generating → awaiting approval → approved.
+// The live document: each section is a card that streams its own content and
+// transitions pending → generating → done. No approval status here.
 function LiveDocumentState({ blocks }: { blocks: LiveBlock[] }) {
   if (blocks.length === 0) return null;
   return (
@@ -250,7 +279,11 @@ function LiveDocumentState({ blocks }: { blocks: LiveBlock[] }) {
           <div key={block.id} data-testid="section-card" data-section-id={block.id} data-status={block.status} className={`rounded-xl border px-4 py-3 transition-colors duration-300 ${meta.card}`}>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
-                <span className={`w-1.5 h-1.5 rounded-full flex-none ${meta.dot} ${block.status === "generating" ? "animate-pulse" : ""}`} />
+                {block.status === "done" ? (
+                  <Check className="w-3 h-3 text-foreground/60 flex-none" />
+                ) : (
+                  <span className={`w-1.5 h-1.5 rounded-full flex-none ${meta.dot} ${block.status === "generating" ? "animate-pulse" : ""}`} />
+                )}
                 <span className="text-xs font-semibold text-foreground truncate">{block.title}</span>
               </div>
               <span className={`text-[9px] uppercase tracking-widest font-bold flex-none px-2 py-0.5 rounded-full border ${meta.badge}`}>
@@ -258,7 +291,7 @@ function LiveDocumentState({ blocks }: { blocks: LiveBlock[] }) {
               </span>
             </div>
             <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5">
-              {block.status === "generating" && <Loader2 className="w-3 h-3 animate-spin text-sky-400" />}
+              {block.status === "generating" && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
               <span className="truncate">{block.message}</span>
             </div>
             {block.content && (
@@ -474,6 +507,11 @@ export default function App() {
   const [docs, setDocs] = useState<DocEntry[]>([]);
   const [activeDocId, setActiveDocId] = useState<string>("prd");
   const [reviewComment, setReviewComment] = useState("");
+  const [inlineRevisions, setInlineRevisions] = useState<InlineRevision[]>([]);
+  const [selectionAnchor, setSelectionAnchor] = useState<{ x: number; y: number; quote: string; docId: string } | null>(null);
+  const [inlineCommentInput, setInlineCommentInput] = useState("");
+  const [inlineComposerOpen, setInlineComposerOpen] = useState(false);
+  const [isApplyingInlineRevisions, setIsApplyingInlineRevisions] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [notes, setNotes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -486,6 +524,8 @@ export default function App() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prdDocRef = useRef<HTMLDivElement>(null);
   const printPrdRef = useRef<HTMLDivElement>(null);
+  const previewRenderRef = useRef<HTMLDivElement>(null);
+  const [previewDoc, setPreviewDoc] = useState<DocEntry | null>(null);
 
   const submitted = phase !== "landing";
 
@@ -555,6 +595,10 @@ export default function App() {
       setPrd(active.markdown);
       setNotes([]);
       setReviewComment("");
+      setInlineRevisions([]);
+      setSelectionAnchor(null);
+      setInlineCommentInput("");
+      setInlineComposerOpen(false);
       setLiveBlocks([]);
       setIsEditingPrd(false);
       setEditorKey((value) => value + 1);
@@ -667,6 +711,51 @@ export default function App() {
     window.setTimeout(() => printWindow.print(), 250);
   };
 
+  // Standalone, readable HTML page for opening an approved doc in a new tab.
+  const buildDocPageHtml = (title: string, innerHtml: string) => `<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #111827; background: #f5f7fa; margin: 0; line-height: 1.6; }
+    .doc { max-width: 820px; margin: 40px auto; background: #ffffff; padding: 56px 64px; border-radius: 12px; box-shadow: 0 8px 40px rgba(0,0,0,0.08); }
+    h1 { font-size: 28px; margin: 0 0 18px; }
+    h2 { font-size: 20px; margin: 28px 0 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    h3 { font-size: 16px; margin: 20px 0 8px; }
+    p, li { font-size: 14px; }
+    ul, ol { padding-left: 22px; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13px; }
+    th, td { border: 1px solid #d1d5db; padding: 6px 8px; vertical-align: top; text-align: left; }
+    th { background: #f3f4f6; }
+    blockquote { border-left: 3px solid #d1d5db; color: #4b5563; margin-left: 0; padding-left: 14px; }
+    code { font-family: "JetBrains Mono", monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body><div class="doc">${innerHtml}</div></body>
+</html>`;
+
+  // Open an approved document rendered as HTML in a new browser tab. We render
+  // its markdown into a hidden node first, then lift the HTML into the new tab.
+  useEffect(() => {
+    if (!previewDoc || !previewRenderRef.current) return;
+    const innerHtml = previewRenderRef.current.innerHTML;
+    const tab = window.open("", "_blank");
+    if (!tab) {
+      setError("Preview blocked by popup settings");
+      setPreviewDoc(null);
+      return;
+    }
+    tab.document.open();
+    tab.document.write(buildDocPageHtml(previewDoc.title, innerHtml));
+    tab.document.close();
+    tab.focus();
+    setPreviewDoc(null);
+  }, [previewDoc]);
+
   
 
 
@@ -775,6 +864,9 @@ export default function App() {
     setGenStatus("Starting…");
     setIsEditingPrd(false);
     setReviewComment("");
+    setSelectionAnchor(null);
+    setInlineCommentInput("");
+    setInlineComposerOpen(false);
     setEditorKey((v) => v + 1);
     setEditSaveStatus("");
     setPhase(targetStage === "prd" ? "researching" : "generating");
@@ -864,6 +956,11 @@ export default function App() {
     commitActiveDoc();
     setNotes([]);
     setReviewComment("");
+    const docIds = STAGE_DOCS[stage].map((d) => d.id);
+    setInlineRevisions((prev) => prev.filter((item) => !docIds.includes(item.docId)));
+    setSelectionAnchor(null);
+    setInlineCommentInput("");
+    setInlineComposerOpen(false);
     const next = STAGE_ORDER[STAGE_ORDER.indexOf(stage) + 1];
     if (next === "design") triggerDesign();
     else if (next === "backlog") triggerBacklog();
@@ -876,6 +973,11 @@ export default function App() {
     const nextNotes = note ? [...notes, note] : notes;
     setNotes(nextNotes);
     setReviewComment("");
+    const docIds = STAGE_DOCS[stage].map((d) => d.id);
+    setInlineRevisions((prev) => prev.filter((item) => !docIds.includes(item.docId)));
+    setSelectionAnchor(null);
+    setInlineCommentInput("");
+    setInlineComposerOpen(false);
     if (stage === "prd") triggerGeneratePrd(submittedText, classification!, buildAnswersPayload(), nextNotes);
     else if (stage === "design") triggerDesign(nextNotes);
     else if (stage === "backlog") triggerBacklog(nextNotes);
@@ -937,6 +1039,10 @@ export default function App() {
       setActiveDocId("prd");
       setNotes([]);
       setReviewComment("");
+      setInlineRevisions([]);
+      setSelectionAnchor(null);
+      setInlineCommentInput("");
+      setInlineComposerOpen(false);
       setLiveBlocks([]);
       setError(null);
       setInput("");
@@ -968,15 +1074,266 @@ export default function App() {
     backlog: "Sprint Backlog",
   };
   const stageDocList = STAGE_DOCS[stage];
+  const stageDocIds = stageDocList.map((d) => d.id);
   const isReview = phase === "review";
   const isGenerating = phase === "generating" || phase === "researching";
   const activeDocTitle = docs.find((d) => d.id === activeDocId)?.title ?? stageDocList[0]?.title ?? "Document";
   const isLastStage = STAGE_ORDER.indexOf(stage) === STAGE_ORDER.length - 1;
+
+  // Lifecycle status of each pipeline stage, for the header stepper.
+  const stageStatus = (s: Stage): StageStatus => {
+    if (phase === "hub") return "approved";
+    const ci = STAGE_ORDER.indexOf(stage);
+    const si = STAGE_ORDER.indexOf(s);
+    if (si < ci) return "approved";
+    if (si > ci) return "pending";
+    if (isReview) return "awaiting_approval";
+    if (isGenerating) return "generating";
+    return "pending";
+  };
+  const showStepper = isGenerating || isReview || phase === "hub";
+
+  // Documents belonging to already-approved stages — surfaced as clickable
+  // preview chips in the header; each opens in a new tab.
+  const approvedDocList = STAGE_ORDER
+    .filter((s) => stageStatus(s) === "approved")
+    .flatMap((s) => STAGE_DOCS[s].map((d) => d.id))
+    .map((id) => docs.find((d) => d.id === id))
+    .filter((d): d is DocEntry => Boolean(d));
   const submitLeftChat = () => {
     const text = chatInput.trim();
     if (!text || !isReview) return;
     setChatInput("");
     submitRevision(text);
+  };
+
+  const cleanSelectionText = (value: string) =>
+    value
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240);
+
+  const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // Project markdown source down to the visible text a browser would render
+  // (the selection is captured from the rendered DOM, so it carries no `**`,
+  // `` ` ``, or link syntax). `map[i]` is the source offset of visible char i,
+  // enabling us to map a match back to precise source offsets for splicing.
+  const projectMarkdown = (source: string): { plain: string; map: number[] } => {
+    const chars: string[] = [];
+    const map: number[] = [];
+    const n = source.length;
+    let i = 0;
+    let atLineStart = true;
+    while (i < n) {
+      const c = source[i];
+      if (c === "\n") {
+        chars.push(" ");
+        map.push(i);
+        atLineStart = true;
+        i++;
+        continue;
+      }
+      if (atLineStart) {
+        if (c === " " || c === "\t") { i++; continue; }
+        if (c === "#") {
+          while (i < n && source[i] === "#") i++;
+          while (i < n && (source[i] === " " || source[i] === "\t")) i++;
+          atLineStart = false;
+          continue;
+        }
+        if (c === ">") {
+          i++;
+          while (i < n && (source[i] === " " || source[i] === "\t")) i++;
+          continue; // keep atLineStart true for nested markers
+        }
+        if ((c === "-" || c === "*" || c === "+") && (source[i + 1] === " " || source[i + 1] === "\t")) {
+          i += 2;
+          continue;
+        }
+        const ordered = source.slice(i, i + 12).match(/^(\d+)[.)]\s+/);
+        if (ordered) { i += ordered[0].length; continue; }
+        atLineStart = false;
+      }
+      // Emphasis / code markers carry no visible glyph.
+      if (c === "*" || c === "`" || c === "~") { i++; continue; }
+      // Links: [text](url) render as just `text`.
+      if (c === "[") {
+        const close = source.indexOf("]", i + 1);
+        if (close !== -1 && source[close + 1] === "(") {
+          const paren = source.indexOf(")", close + 2);
+          if (paren !== -1) {
+            for (let j = i + 1; j < close; j++) {
+              const cc = source[j];
+              if (cc === "*" || cc === "`" || cc === "~") continue;
+              chars.push(cc);
+              map.push(j);
+            }
+            i = paren + 1;
+            continue;
+          }
+        }
+      }
+      chars.push(c);
+      map.push(i);
+      i++;
+    }
+    return { plain: chars.join(""), map };
+  };
+
+  // Collapse whitespace runs while keeping the source-offset map aligned.
+  const collapseWhitespace = (plain: string, map: number[]): { text: string; map: number[] } => {
+    const chars: string[] = [];
+    const outMap: number[] = [];
+    let prevSpace = false;
+    for (let k = 0; k < plain.length; k++) {
+      const ch = plain[k];
+      if (/\s/.test(ch)) {
+        if (prevSpace) continue;
+        chars.push(" ");
+        outMap.push(map[k]);
+        prevSpace = true;
+      } else {
+        chars.push(ch);
+        outMap.push(map[k]);
+        prevSpace = false;
+      }
+    }
+    return { text: chars.join(""), map: outMap };
+  };
+
+  const replaceSelectedSnippet = (markdown: string, selectedText: string, replacement: string) => {
+    // Fast path: the selection is present verbatim in the source.
+    const directIndex = markdown.indexOf(selectedText);
+    if (directIndex !== -1) {
+      return markdown.slice(0, directIndex) + replacement + markdown.slice(directIndex + selectedText.length);
+    }
+
+    // Markdown-aware path: match against the rendered projection, then map the
+    // hit back to source offsets and absorb any wrapping emphasis markers so we
+    // don't leave dangling `**`/`` ` ``.
+    const needle = selectedText.replace(/\s+/g, " ").trim();
+    if (needle) {
+      const { plain, map } = projectMarkdown(markdown);
+      const collapsed = collapseWhitespace(plain, map);
+      const hay = collapsed.text.toLowerCase();
+      const idx = hay.indexOf(needle.toLowerCase());
+      if (idx !== -1) {
+        let start = collapsed.map[idx];
+        let end = collapsed.map[idx + needle.length - 1] + 1;
+        const markers = "*`~";
+        while (start > 0 && markers.includes(markdown[start - 1])) start--;
+        while (end < markdown.length && markers.includes(markdown[end])) end++;
+        return markdown.slice(0, start) + replacement + markdown.slice(end);
+      }
+    }
+
+    // Last-resort fuzzy match tolerant of markdown markers between tokens.
+    const tokens = needle.split(/\s+/).filter(Boolean).map(escapeRegex);
+    if (tokens.length > 0) {
+      const fuzzy = new RegExp(tokens.join("[\\s*_`~]*"), "i");
+      const match = fuzzy.exec(markdown);
+      if (match && match.index >= 0) {
+        return markdown.slice(0, match.index) + replacement + markdown.slice(match.index + match[0].length);
+      }
+    }
+
+    throw new Error(`Could not locate selected text in ${activeDocTitle} for targeted revision`);
+  };
+
+  const captureSelectionForComment = () => {
+    if (!isReview || isEditingPrd || !prdDocRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      setSelectionAnchor(null);
+      setInlineComposerOpen(false);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!prdDocRef.current.contains(range.commonAncestorContainer)) return;
+    const selected = cleanSelectionText(selection.toString());
+    if (!selected) {
+      setSelectionAnchor(null);
+      setInlineComposerOpen(false);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelectionAnchor({
+      x: Math.min(window.innerWidth - 150, rect.right + 10),
+      y: Math.max(86, rect.top - 8),
+      quote: selected,
+      docId: activeDocId,
+    });
+    setInlineComposerOpen(false);
+    setInlineCommentInput("");
+  };
+
+  const activeDocRevisions = inlineRevisions.filter((item) => item.docId === activeDocId);
+
+  const submitInlineRevision = () => {
+    if (!selectionAnchor) return;
+    const suggestion = inlineCommentInput.trim();
+    if (!suggestion) return;
+    setInlineRevisions((prev) => [
+      {
+        id: crypto.randomUUID(),
+        docId: selectionAnchor.docId,
+        selectedText: selectionAnchor.quote,
+        suggestion,
+        author: REVIEWER_NAME,
+      },
+      ...prev,
+    ]);
+    setSelectionAnchor(null);
+    setInlineComposerOpen(false);
+    setInlineCommentInput("");
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const submitRevisionFromInlineComments = async () => {
+    const stageRevisions = inlineRevisions.filter((item) => stageDocIds.includes(item.docId));
+    if (stageRevisions.length === 0) {
+      submitRevision(reviewComment);
+      return;
+    }
+    setIsApplyingInlineRevisions(true);
+    try {
+      const byDoc = new Map<string, InlineRevision[]>();
+      for (const revision of stageRevisions) {
+        if (!byDoc.has(revision.docId)) byDoc.set(revision.docId, []);
+        byDoc.get(revision.docId)!.push(revision);
+      }
+
+      let nextDocs = docs.map((d) => ({ ...d }));
+      for (const [docId, revisions] of byDoc.entries()) {
+        const doc = nextDocs.find((d) => d.id === docId);
+        if (!doc) continue;
+        let updated = doc.markdown;
+        for (const revision of revisions) {
+          const response = await postJSON<ReviseSelectionResponse>("/api/revise-selection", {
+            doc: updated,
+            docTitle: doc.title,
+            selectedText: revision.selectedText,
+            instruction: revision.suggestion,
+          });
+          updated = replaceSelectedSnippet(updated, revision.selectedText, response.replacement.trim());
+        }
+        doc.markdown = updated;
+      }
+
+      const activeUpdated = nextDocs.find((d) => d.id === activeDocId);
+      setDocs(nextDocs);
+      if (activeUpdated) setPrd(activeUpdated.markdown);
+      setInlineRevisions((prev) => prev.filter((item) => !stageDocIds.includes(item.docId)));
+      setSelectionAnchor(null);
+      setInlineCommentInput("");
+      setInlineComposerOpen(false);
+      setReviewComment("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Targeted revision failed");
+    } finally {
+      setIsApplyingInlineRevisions(false);
+    }
   };
 
   const statusLine = () => {
@@ -996,7 +1353,7 @@ export default function App() {
 
   return (
     
-    <div className="h-screen bg-background text-foreground flex overflow-hidden" style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" }}>
+    <div className="h-screen bg-background text-foreground flex overflow-hidden" style={{ fontFamily: SANS }}>
             {/* FLOATING MENU BUTTON WHEN SIDEBAR CLOSED */}
       {!sidebarOpen && (
         <button 
@@ -1052,7 +1409,7 @@ export default function App() {
                 {isDark ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
              </button>
              <button className="text-xs px-4 py-2 rounded-full font-semibold transition-all hover:opacity-90 bg-primary text-primary-foreground">
-                Sign in
+                {REVIEWER_NAME}
              </button>
            </div>
         </div>
@@ -1069,7 +1426,7 @@ export default function App() {
           <div data-testid="hub" className="absolute inset-0 z-30 bg-background flex flex-col overflow-hidden">
             <div className="flex-none flex items-center justify-between px-8 py-5 border-b border-white/10 bg-card">
               <div>
-                <div className="text-[10px] uppercase tracking-widest mb-1 font-bold text-primary" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                <div className="text-[10px] uppercase tracking-widest mb-1 font-bold text-primary" style={{ fontFamily: SANS }}>
                   Delivery
                 </div>
                 <div className="text-base font-bold text-foreground">All documents ready</div>
@@ -1137,7 +1494,7 @@ export default function App() {
                   />
                   <div className="flex items-center justify-between px-3 pb-2 pt-1">
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span className="text-[10px] text-muted-foreground" style={{ fontFamily: SANS }}>
                         Press ↵ to continue
                       </span>
                       <label className="flex items-center gap-2 cursor-pointer group">
@@ -1190,7 +1547,7 @@ export default function App() {
                     ) : questions.length > 0 ? (
                       <>
                         Before I generate your PRD, a few questions to scope it correctly.
-                        <span className="block mt-2 text-xs font-medium" style={{ fontFamily: "'JetBrains Mono', monospace", color: BLUE }}>
+                        <span className="block mt-2 text-xs font-medium" style={{ fontFamily: SANS, color: BLUE }}>
                           {answeredCount}/{questions.length} answered →
                         </span>
                       </>
@@ -1256,11 +1613,12 @@ export default function App() {
         </div>
 
         {/* RIGHT — form / PRD panel */}
-        <div className="flex-none flex flex-col overflow-hidden transition-all duration-300 ease-in-out" style={{ width: panelVisible ? "54%" : "0%", opacity: panelVisible ? 1 : 0, borderLeft: `2px solid color-mix(in srgb, var(--color-primary) 28%, transparent)`, background: (isReview || phase === "generating") ? "var(--color-card)" : "var(--color-secondary)" }}>
+        <div className="flex-none flex flex-col overflow-hidden transition-all duration-300 ease-in-out" style={{ width: panelVisible ? "54%" : "0%", opacity: panelVisible ? 1 : 0, borderLeft: `2px solid color-mix(in srgb, var(--color-primary) 40%, transparent)`, background: "var(--color-card)", boxShadow: "inset 12px 0 24px -18px color-mix(in srgb, var(--color-primary) 45%, transparent), -8px 0 24px -20px color-mix(in srgb, var(--color-primary) 30%, transparent)" }}>
           {/* header */}
-          <div className="flex-none flex items-center justify-between px-7 py-5 bg-card" style={{ borderBottom: `2px solid color-mix(in srgb, var(--color-primary) 18%, transparent)` }}>
+          <div className="flex-none px-7 py-4 bg-card" style={{ borderBottom: `2px solid color-mix(in srgb, var(--color-primary) 18%, transparent)` }}>
+            <div className="flex items-center justify-between">
             <div>
-              <div className="text-[10px] uppercase tracking-widest mb-1 font-bold" style={{ fontFamily: "'JetBrains Mono', monospace", color: BLUE }}>
+              <div className="text-[10px] uppercase tracking-widest mb-1 font-bold" style={{ fontFamily: SANS, color: BLUE }}>
                 {isReview || phase === "generating" ? STAGE_LABEL[stage] : phase === "researching" ? "Research" : "Scoping Questions"}
               </div>
               <div className="text-sm font-bold text-foreground">
@@ -1302,9 +1660,9 @@ export default function App() {
                   </button>
                 </>
               )}
-              {!isReview && questions.length > 0 && (
+              {(phase === "form" || phase === "questioning") && questions.length > 0 && (
                 <>
-                  <span className="text-xs text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                  <span className="text-xs text-muted-foreground" style={{ fontFamily: SANS }}>
                     {answeredCount} / {questions.length}
                   </span>
                   <div className="w-24 h-1.5 rounded-full overflow-hidden bg-primary/10">
@@ -1316,6 +1674,60 @@ export default function App() {
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
+            </div>
+
+            {/* stage stepper — pending → generating → awaiting approval → approved, across all 3 processes */}
+            {showStepper && (
+              <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+                {STAGE_ORDER.map((s, i) => {
+                  const st = stageStatus(s);
+                  const m = STEP_META[st];
+                  return (
+                    <div key={s} className="flex items-center gap-1.5">
+                      <div data-testid="stage-step" data-stage-id={s} data-status={st} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${m.box}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full flex-none ${m.dot}`} />
+                        <span className="text-[10px] font-bold text-foreground whitespace-nowrap">{STAGE_STEP_LABEL[s]}</span>
+                        <span className={`text-[9px] uppercase tracking-wide font-semibold whitespace-nowrap ${m.text}`}>{m.label}</span>
+                      </div>
+                      {i < STAGE_ORDER.length - 1 && <ChevronRight className="w-3 h-3 text-muted-foreground/40 flex-none" />}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {approvedDocList.length > 0 && (
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px] uppercase tracking-wider font-bold text-muted-foreground">Approved</span>
+                {approvedDocList.map((d) => (
+                  <button
+                    key={d.id}
+                    data-testid="approved-doc-chip"
+                    onClick={() => setPreviewDoc(d)}
+                    title={`Open ${d.title} in a new tab`}
+                    className="flex items-center gap-1 px-2 py-1 rounded-full border border-primary/30 bg-primary/10 text-[10px] font-semibold text-foreground hover:bg-primary/20 transition-colors"
+                  >
+                    <Check className="w-2.5 h-2.5 text-primary" />
+                    {d.title}
+                    <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                  </button>
+                ))}
+              </div>
+            )}
+            {isReview && activeDocRevisions.length > 0 && (
+              <div className="mt-3 rounded-xl border border-primary/25 bg-background/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-primary mb-1.5" style={{ fontFamily: SANS }}>
+                  Lines To Change ({activeDocRevisions.length}) · {REVIEWER_NAME}
+                </div>
+                <div className="space-y-1.5">
+                  {activeDocRevisions.map((item) => (
+                    <div key={item.id} className="rounded-lg border border-white/10 bg-card px-2.5 py-2">
+                      <div className="text-[11px] text-foreground font-medium">"{item.selectedText}"</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">Revision: {item.suggestion}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* body */}
@@ -1352,7 +1764,14 @@ export default function App() {
                   onChange={setPrd}
                 />
               ) : (
-                <div ref={prdDocRef} data-testid="prd-doc" className="prd-doc max-w-3xl mx-auto text-sm leading-relaxed" style={{ color: "var(--color-foreground)" }}>
+                <div
+                  ref={prdDocRef}
+                  data-testid="prd-doc"
+                  onMouseUp={captureSelectionForComment}
+                  onKeyUp={captureSelectionForComment}
+                  className="prd-doc max-w-3xl mx-auto text-sm leading-relaxed"
+                  style={{ color: "var(--color-foreground)" }}
+                >
                   {prd ? (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{prd}</ReactMarkdown>
                   ) : (
@@ -1365,6 +1784,59 @@ export default function App() {
               <div ref={printPrdRef} className="prd-doc hidden">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{prd}</ReactMarkdown>
               </div>
+              {selectionAnchor && selectionAnchor.docId === activeDocId && !isEditingPrd && (
+                <div
+                  className="fixed z-50"
+                  style={{ left: `${selectionAnchor.x}px`, top: `${selectionAnchor.y}px` }}
+                >
+                  {!inlineComposerOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setInlineComposerOpen(true)}
+                      className="h-7 px-2.5 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground shadow-md hover:opacity-90"
+                    >
+                      +Comment
+                    </button>
+                  ) : (
+                    <div className="w-64 rounded-lg border border-primary/30 bg-card p-2 shadow-lg">
+                      <div className="text-[10px] text-muted-foreground mb-1.5">"{selectionAnchor.quote}"</div>
+                      <input
+                        autoFocus
+                        value={inlineCommentInput}
+                        onChange={(e) => setInlineCommentInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            submitInlineRevision();
+                          }
+                        }}
+                        placeholder="Describe revision..."
+                        className="w-full h-8 rounded-md border border-primary/25 bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                      />
+                      <div className="mt-2 flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInlineComposerOpen(false);
+                            setInlineCommentInput("");
+                          }}
+                          className="h-6 px-2 rounded text-[11px] text-muted-foreground hover:bg-muted"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={submitInlineRevision}
+                          disabled={!inlineCommentInput.trim()}
+                          className="h-6 px-2.5 rounded text-[11px] font-semibold bg-primary text-primary-foreground disabled:opacity-40"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : phase === "classifying" ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-8">
@@ -1413,7 +1885,7 @@ export default function App() {
                   return (
                     <div key={q.id} data-testid="question-card" data-answered={done} className="rounded-2xl bg-card p-5 transition-shadow" style={{ border: done ? `2px solid ${BLUE}` : `1.5px solid color-mix(in srgb, var(--color-primary) 22%, transparent)`, boxShadow: "0 2px 10px color-mix(in srgb, var(--color-primary) 9%, transparent)" }}>
                       <div className="flex items-start gap-3 mb-1">
-                        <span className="w-5 h-5 rounded-full flex-none flex items-center justify-center text-[10px] font-bold mt-0.5" style={{ background: done ? BLUE : BLUE_LIGHT, color: done ? "#ffffff" : BLUE, fontFamily: "'JetBrains Mono', monospace" }}>
+                        <span className="w-5 h-5 rounded-full flex-none flex items-center justify-center text-[10px] font-bold mt-0.5" style={{ background: done ? BLUE : BLUE_LIGHT, color: done ? "#ffffff" : BLUE, fontFamily: SANS }}>
                           {done ? "✓" : i + 1}
                         </span>
                         <p className="text-sm font-medium text-foreground leading-snug">{q.label}</p>
@@ -1487,17 +1959,18 @@ export default function App() {
                 value={reviewComment}
                 onChange={(e) => setReviewComment(e.target.value)}
                 rows={2}
-                placeholder={`Comment to revise this ${activeDocTitle.toLowerCase()} — the AI rectifies and regenerates…`}
+                placeholder={`Optional overall comment for ${activeDocTitle.toLowerCase()}…`}
                 className="w-full bg-background text-sm text-foreground placeholder:text-muted-foreground px-3 py-2 rounded-xl border border-primary/30 outline-none resize-none"
               />
               <div className="flex gap-3">
                 <button
                   data-testid="deny-btn"
-                  onClick={() => submitRevision(reviewComment)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium transition-all hover:bg-muted text-muted-foreground bg-transparent border border-white/10 flex items-center justify-center gap-1.5"
+                  onClick={submitRevisionFromInlineComments}
+                  disabled={isApplyingInlineRevisions}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium transition-all hover:bg-muted text-muted-foreground bg-transparent border border-white/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
                   title="Reject and regenerate with your comments"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" /> Deny &amp; revise
+                  {isApplyingInlineRevisions ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Revise
                 </button>
                 <button
                   data-testid="approve-btn"
@@ -1505,7 +1978,7 @@ export default function App() {
                   className="flex-[2] py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-85 text-primary-foreground flex items-center justify-center gap-1.5 bg-primary"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  {isLastStage ? "Approve & finish" : `Approve → ${STAGE_LABEL[STAGE_ORDER[STAGE_ORDER.indexOf(stage) + 1]]}`}
+                  {isLastStage ? "Proceed & finish" : `Proceed → ${STAGE_LABEL[STAGE_ORDER[STAGE_ORDER.indexOf(stage) + 1]]}`}
                 </button>
               </div>
             </div>
@@ -1513,6 +1986,11 @@ export default function App() {
         </div>
       </div>
     </div>
+    {previewDoc && (
+      <div ref={previewRenderRef} className="prd-doc hidden" aria-hidden>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{previewDoc.markdown}</ReactMarkdown>
+      </div>
+    )}
     </div>
   );
 }

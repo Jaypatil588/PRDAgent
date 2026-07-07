@@ -56,8 +56,13 @@
   margin: 0.7rem 0;
   color: var(--muted-foreground);
 }
+.prd-doc {
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
 .prd-doc table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   margin: 0.8rem 0;
   font-size: 0.85rem;
@@ -68,6 +73,13 @@
   padding: 0.45rem 0.65rem;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.prd-doc pre,
+.prd-doc code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .prd-doc th {
   background: color-mix(in srgb, var(--primary) 10%, transparent);
